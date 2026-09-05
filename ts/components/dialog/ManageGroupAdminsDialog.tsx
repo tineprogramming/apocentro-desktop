@@ -3,7 +3,10 @@ import type { GroupPubkeyType, PubkeyType } from 'libsession_util_nodejs';
 import styled from 'styled-components';
 
 import { getAppDispatch } from '../../state/dispatch';
-import { updateManageGroupAdminsModal } from '../../state/ducks/modalDialog';
+import {
+  updateConversationSettingsModal,
+  updateManageGroupAdminsModal,
+} from '../../state/ducks/modalDialog';
 import { groupInfoActions } from '../../state/ducks/metaGroups';
 import {
   useLibGroupSuperAdmin,
@@ -15,7 +18,7 @@ import {
   useWeAreAdmin,
 } from '../../hooks/useParamSelector';
 import { PubKey } from '../../session/types';
-import { UserUtils } from '../../session/utils';
+import { ToastUtils, UserUtils } from '../../session/utils';
 import { tr } from '../../localization/localeTools';
 import { MemberListItem } from '../MemberListItem';
 import { SessionButton, SessionButtonColor, SessionButtonType } from '../basic/SessionButton';
@@ -48,6 +51,13 @@ const StyledSuperAdminLabel = styled.div`
   padding: 0 var(--margins-sm);
   color: var(--text-secondary-color);
   font-size: var(--font-size-sm);
+  text-align: center;
+`;
+
+const StyledHint = styled.div`
+  padding: 0 var(--margins-lg);
+  color: var(--text-secondary-color);
+  font-size: var(--font-size-xs);
   text-align: center;
 `;
 
@@ -157,6 +167,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
         return;
       }
       await kickAdminAndRecreateGroup(groupPk, selected as PubkeyType);
+      ToastUtils.pushToastSuccess('kickAdminDone', tr('kickAdminDoneDev'));
     });
 
     setBusy(false);
@@ -164,6 +175,10 @@ export const ManageGroupAdminsDialog = (props: Props) => {
       setFailed(true);
       setPending(null);
       return;
+    }
+    if (pending === 'kick') {
+      // the conversation this was opened from no longer exists
+      dispatch(updateConversationSettingsModal(null));
     }
     closeDialog();
   };
@@ -282,7 +297,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
             key={`admin-${member.pubkeyHex}`}
             pubkey={member.pubkeyHex}
             isSelected={selected === member.pubkeyHex}
-            onSelect={() => setSelected(member.pubkeyHex)}
+            onSelect={() => setSelected(member.pubkeyHex === us ? null : member.pubkeyHex)}
             onUnselect={() => setSelected(null)}
             isAdmin={true}
             hideRadioButton={!weAreSuperAdmin || member.pubkeyHex === us}
@@ -308,6 +323,10 @@ export const ManageGroupAdminsDialog = (props: Props) => {
           />
         ))}
       </StyledContactListInModal>
+      <SpacerSM />
+      {weAreSuperAdmin && !anAdminIsPicked ? (
+        <StyledHint>{tr('manageAdminsSelectHintDev')}</StyledHint>
+      ) : null}
       <SpacerLG />
       <SessionSpinner $loading={isProcessingUIChange || busy} />
       <SpacerLG />
