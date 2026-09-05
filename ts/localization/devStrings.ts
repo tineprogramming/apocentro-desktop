@@ -122,6 +122,7 @@ export const devSimpleNoArgs = {
   manageAdminsSelectHintDev:
     'Select an admin above to hand the super admin role over to them, or to kick them.',
   kickAdminDoneDev: 'The group was recreated without that admin.',
+  superAdminUpdatedDev: 'Super admin updated.',
   superAdminActionFailedDev: 'That change could not be applied.',
   groupAdminsSectionDev: 'Admins',
   groupMembersSectionDev: 'Members',
