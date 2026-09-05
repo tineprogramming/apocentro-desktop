@@ -3,19 +3,20 @@ import type { GroupPubkeyType, PubkeyType } from 'libsession_util_nodejs';
 import styled from 'styled-components';
 
 import { getAppDispatch } from '../../state/dispatch';
-import { updateManageGroupAdminsModal } from '../../state/ducks/modalDialog';
+import {
+  updateConfirmModal,
+  updateConversationSettingsModal,
+  updateManageGroupAdminsModal,
+} from '../../state/ducks/modalDialog';
 import { groupInfoActions } from '../../state/ducks/metaGroups';
 import {
   useLibGroupSuperAdmin,
-  useStateOf03GroupMembers,
   useMemberGroupChangePending,
+  useStateOf03GroupMembers,
 } from '../../state/selectors/groups';
-import {
-  useConversationUsernameWithFallback,
-  useWeAreAdmin,
-} from '../../hooks/useParamSelector';
+import { useConversationUsernameWithFallback, useWeAreAdmin } from '../../hooks/useParamSelector';
 import { PubKey } from '../../session/types';
-import { UserUtils } from '../../session/utils';
+import { ToastUtils, UserUtils } from '../../session/utils';
 import { tr } from '../../localization/localeTools';
 import { MemberListItem } from '../MemberListItem';
 import { SessionButton, SessionButtonColor, SessionButtonType } from '../basic/SessionButton';
@@ -34,9 +35,6 @@ type Props = {
   conversationId: string;
 };
 
-/** claim and transfer are the same write; kick is its own flow */
-type PendingAction = 'claim' | 'transfer' | 'kick';
-
 const StyledSectionLabel = styled.div`
   padding: var(--margins-xs) var(--margins-sm);
   color: var(--text-secondary-color);
@@ -51,7 +49,14 @@ const StyledSuperAdminLabel = styled.div`
   text-align: center;
 `;
 
-const StyledConfirmText = styled.div`
+const StyledHint = styled.div`
+  padding: 0 var(--margins-lg);
+  color: var(--text-secondary-color);
+  font-size: var(--font-size-xs);
+  text-align: center;
+`;
+
+const StyledDescription = styled.div`
   padding: 0 var(--margins-lg);
   color: var(--text-primary-color);
   font-size: var(--font-size-sm);
@@ -63,37 +68,15 @@ const StyledConfirmText = styled.div`
  * NOTE: [react-compiler] kept out of the component: the compiler cannot yet handle
  * value blocks (optional chaining and friends) inside a try/catch.
  */
-async function runAdminAction(action: () => Promise<unknown>): Promise<boolean> {
+async function runAdminAction(action: () => Promise<unknown>, successToast?: string) {
   try {
     await action();
-    return true;
+    if (successToast) {
+      ToastUtils.pushToastSuccess('superAdminAction', successToast);
+    }
   } catch (e) {
     window?.log?.warn('ManageGroupAdminsDialog: action failed with', e.message);
-    return false;
-  }
-}
-
-function confirmTokenFor(pending: PendingAction) {
-  switch (pending) {
-    case 'claim':
-      return 'claimSuperAdminConfirmDev' as const;
-    case 'transfer':
-      return 'transferSuperAdminConfirmDev' as const;
-    case 'kick':
-    default:
-      return 'kickAdminConfirmDev' as const;
-  }
-}
-
-function confirmButtonTokenFor(pending: PendingAction) {
-  switch (pending) {
-    case 'claim':
-      return 'claimSuperAdminDev' as const;
-    case 'transfer':
-      return 'transferSuperAdminDev' as const;
-    case 'kick':
-    default:
-      return 'kickAdminDev' as const;
+    ToastUtils.pushToastError('superAdminAction', tr('superAdminActionFailedDev'));
   }
 }
 
@@ -115,9 +98,6 @@ export const ManageGroupAdminsDialog = (props: Props) => {
   const isProcessingUIChange = useMemberGroupChangePending();
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingAction | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
 
   const superAdminName = useConversationUsernameWithFallback(true, superAdminId || us);
 
@@ -126,86 +106,97 @@ export const ManageGroupAdminsDialog = (props: Props) => {
 
   const weAreSuperAdmin = !!superAdminId && superAdminId === us;
   const selectedIsAdmin = !!selected && admins.some(m => m.pubkeyHex === selected);
-  const selectedIsUs = selected === us;
+  const anAdminIsPicked = selectedIsAdmin && selected !== us;
 
   const canClaim = weAreAdmin && !superAdminId;
-  // an admin other than ourselves has to be picked before either of these can run
-  const anAdminIsPicked = selectedIsAdmin && !selectedIsUs;
 
   const closeDialog = () => {
     dispatch(updateManageGroupAdminsModal(null));
   };
 
-  const onConfirm = async () => {
-    if (!pending || !PubKey.is03Pubkey(conversationId)) {
+  const setSuperAdminTo = async (accountId: string) => {
+    if (!PubKey.is03Pubkey(conversationId)) {
       return;
     }
     const groupPk: GroupPubkeyType = conversationId;
-    setBusy(true);
-    setFailed(false);
 
-    const ok = await runAdminAction(async () => {
-      if (pending === 'claim' || pending === 'transfer') {
-        await (
+    await runAdminAction(
+      () =>
+        (
           dispatch(
             groupInfoActions.currentDeviceGroupSuperAdminChange({
               groupPk,
-              superAdminId: (pending === 'claim' ? us : selected) as PubkeyType,
+              superAdminId: accountId as PubkeyType,
             }) as any
           ) as any
-        ).unwrap();
-        return;
-      }
-      await kickAdminAndRecreateGroup(groupPk, selected as PubkeyType);
-    });
-
-    setBusy(false);
-    if (!ok) {
-      setFailed(true);
-      setPending(null);
-      return;
-    }
-    closeDialog();
+        ).unwrap(),
+      tr('superAdminUpdatedDev')
+    );
   };
 
-  if (pending) {
-    return (
-      <SessionWrapperModal
-        modalId="manageGroupAdminsModal"
-        modalDataTestId="manage-group-admins-dialog"
-        headerChildren={
-          <ModalBasicHeader title={tr(confirmButtonTokenFor(pending))} showExitIcon={true} />
-        }
-        onClose={closeDialog}
-        $contentMinWidth={WrapperModalWidth.narrow}
-        buttonChildren={
-          <ModalActionsContainer buttonType={SessionButtonType.Simple}>
-            <SessionButton
-              text={tr(confirmButtonTokenFor(pending))}
-              buttonType={SessionButtonType.Simple}
-              buttonColor={SessionButtonColor.Danger}
-              disabled={busy}
-              onClick={() => void onConfirm()}
-              dataTestId="session-confirm-ok-button"
-            />
-            <SessionButton
-              text={tr('cancel')}
-              buttonType={SessionButtonType.Simple}
-              disabled={busy}
-              onClick={() => setPending(null)}
-              dataTestId="session-confirm-cancel-button"
-            />
-          </ModalActionsContainer>
-        }
-      >
-        <SpacerSM />
-        <StyledConfirmText>{tr(confirmTokenFor(pending))}</StyledConfirmText>
-        <SpacerSM />
-        <SessionSpinner $loading={busy} />
-        <SpacerSM />
-      </SessionWrapperModal>
+  const kickSelectedAdmin = async () => {
+    if (!PubKey.is03Pubkey(conversationId) || !selected) {
+      return;
+    }
+    const groupPk: GroupPubkeyType = conversationId;
+    const toKick = selected as PubkeyType;
+
+    await runAdminAction(async () => {
+      await kickAdminAndRecreateGroup(groupPk, toKick);
+      // the group this screen was opened from is gone now, so its settings go too
+      dispatch(updateConversationSettingsModal(null));
+      closeDialog();
+    }, tr('kickAdminDoneDev'));
+  };
+
+  const askToClaim = () => {
+    dispatch(
+      updateConfirmModal({
+        title: { token: 'claimSuperAdminDev' },
+        i18nMessage: { token: 'claimSuperAdminConfirmDev' },
+        okText: { token: 'claimSuperAdminDev' },
+        okTheme: SessionButtonColor.Danger,
+        onClickOk: () => setSuperAdminTo(us),
+        onClickClose: () => {
+          dispatch(updateConfirmModal(null));
+        },
+      })
     );
-  }
+  };
+
+  const askToTransfer = () => {
+    const target = selected;
+    if (!target) {
+      return;
+    }
+    dispatch(
+      updateConfirmModal({
+        title: { token: 'transferSuperAdminDev' },
+        i18nMessage: { token: 'transferSuperAdminConfirmDev' },
+        okText: { token: 'transferSuperAdminDev' },
+        okTheme: SessionButtonColor.Danger,
+        onClickOk: () => setSuperAdminTo(target),
+        onClickClose: () => {
+          dispatch(updateConfirmModal(null));
+        },
+      })
+    );
+  };
+
+  const askToKick = () => {
+    dispatch(
+      updateConfirmModal({
+        title: { token: 'kickAdminDev' },
+        i18nMessage: { token: 'kickAdminConfirmDev' },
+        okText: { token: 'kickAdminDev' },
+        okTheme: SessionButtonColor.Danger,
+        onClickOk: kickSelectedAdmin,
+        onClickClose: () => {
+          dispatch(updateConfirmModal(null));
+        },
+      })
+    );
+  };
 
   return (
     <SessionWrapperModal
@@ -227,7 +218,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
               text={tr('claimSuperAdminDev')}
               buttonType={SessionButtonType.Simple}
               disabled={isProcessingUIChange}
-              onClick={() => setPending('claim')}
+              onClick={askToClaim}
               dataTestId="claim-super-admin-button"
             />
           ) : null}
@@ -237,7 +228,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
                 text={tr('transferSuperAdminDev')}
                 buttonType={SessionButtonType.Simple}
                 disabled={isProcessingUIChange || !anAdminIsPicked}
-                onClick={() => setPending('transfer')}
+                onClick={askToTransfer}
                 dataTestId="transfer-super-admin-button"
               />
               <SessionButton
@@ -245,7 +236,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
                 buttonType={SessionButtonType.Simple}
                 buttonColor={SessionButtonColor.Danger}
                 disabled={isProcessingUIChange || !anAdminIsPicked}
-                onClick={() => setPending('kick')}
+                onClick={askToKick}
                 dataTestId="kick-admin-button"
               />
             </>
@@ -267,13 +258,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
             : `${tr('superAdminIsDev')} ${superAdminName}`}
       </StyledSuperAdminLabel>
       <SpacerSM />
-      <StyledConfirmText>{tr('manageAdminsDescriptionDev')}</StyledConfirmText>
-      {failed ? (
-        <>
-          <SpacerSM />
-          <StyledConfirmText>{tr('superAdminActionFailedDev')}</StyledConfirmText>
-        </>
-      ) : null}
+      <StyledDescription>{tr('manageAdminsDescriptionDev')}</StyledDescription>
       <SpacerSM />
       <StyledContactListInModal>
         <StyledSectionLabel>{tr('groupAdminsSectionDev')}</StyledSectionLabel>
@@ -282,7 +267,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
             key={`admin-${member.pubkeyHex}`}
             pubkey={member.pubkeyHex}
             isSelected={selected === member.pubkeyHex}
-            onSelect={() => setSelected(member.pubkeyHex)}
+            onSelect={() => setSelected(member.pubkeyHex === us ? null : member.pubkeyHex)}
             onUnselect={() => setSelected(null)}
             isAdmin={true}
             hideRadioButton={!weAreSuperAdmin || member.pubkeyHex === us}
@@ -299,7 +284,7 @@ export const ManageGroupAdminsDialog = (props: Props) => {
           <MemberListItem
             key={`member-${member.pubkeyHex}`}
             pubkey={member.pubkeyHex}
-            isSelected={selected === member.pubkeyHex}
+            isSelected={false}
             hideRadioButton={true}
             disableBg={true}
             displayGroupStatus={true}
@@ -308,8 +293,12 @@ export const ManageGroupAdminsDialog = (props: Props) => {
           />
         ))}
       </StyledContactListInModal>
+      <SpacerSM />
+      {weAreSuperAdmin && !anAdminIsPicked ? (
+        <StyledHint>{tr('manageAdminsSelectHintDev')}</StyledHint>
+      ) : null}
       <SpacerLG />
-      <SessionSpinner $loading={isProcessingUIChange || busy} />
+      <SessionSpinner $loading={isProcessingUIChange} />
       <SpacerLG />
     </SessionWrapperModal>
   );

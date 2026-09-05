@@ -7,7 +7,6 @@ import { GroupSync } from '../../session/utils/job_runners/jobs/GroupSyncJob';
 import { RunJobResult } from '../../session/utils/job_runners/PersistedJob';
 import { MetaGroupWrapperActions } from '../../webworker/workers/browser/libsession_worker_interface';
 import { SuperAdmin } from '../../util/superAdmin';
-import { getAppDispatch } from '../../state/dispatch';
 import { groupInfoActions } from '../../state/ducks/metaGroups';
 import { setDisappearingMessagesByConvoId } from '../conversationInteractions';
 
@@ -46,6 +45,11 @@ export async function kickAdminAndRecreateGroup(
   if (!infos) {
     throw new Error('kickAdminAndRecreateGroup: infoGet is empty');
   }
+  // Android guards this in the manager, not just the UI: check(isSelfSuperAdmin(oldId))
+  if (SuperAdmin.parse(infos.description) !== us) {
+    throw new Error('kickAdminAndRecreateGroup: only the super admin can kick an admin');
+  }
+
   const allMembers = await MetaGroupWrapperActions.memberGetAll(groupPk);
   const others = allMembers.filter(m => m.pubkeyHex !== us && m.pubkeyHex !== kicked);
   const remainingMembers = others.map(m => m.pubkeyHex);
@@ -56,9 +60,14 @@ export async function kickAdminAndRecreateGroup(
   const oldExpireTimer = oldConvo?.getExpireTimer();
 
   // 2. create the replacement group (this invites every member and makes us its super admin)
-  const dispatch = getAppDispatch();
+  // NOTE: the store, not the useDispatch() wrapper -- this runs from a click
+  // handler, outside of React, where calling a hook throws.
+  const store = window.inboxStore;
+  if (!store) {
+    throw new Error('kickAdminAndRecreateGroup: no redux store');
+  }
   const created: any = await (
-    dispatch(
+    store.dispatch(
       groupInfoActions.initNewGroupInWrapper({
         groupName: infos.name || '',
         groupDescription: SuperAdmin.strip(infos.description),

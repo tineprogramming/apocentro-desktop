@@ -119,6 +119,10 @@ export const devSimpleNoArgs = {
   kickAdminDev: 'Kick admin',
   kickAdminConfirmDev:
     'Kick this admin from the group? Admins cannot be removed from an existing group, so Apocentro will recreate it without them: a new group with the same name, picture, timer and members is created and everyone is re-invited, then the old group is deleted for all members. Message history is not carried over. This cannot be undone.',
+  manageAdminsSelectHintDev:
+    'Select an admin above to hand the super admin role over to them, or to kick them.',
+  kickAdminDoneDev: 'The group was recreated without that admin.',
+  superAdminUpdatedDev: 'Super admin updated.',
   superAdminActionFailedDev: 'That change could not be applied.',
   groupAdminsSectionDev: 'Admins',
   groupMembersSectionDev: 'Members',
