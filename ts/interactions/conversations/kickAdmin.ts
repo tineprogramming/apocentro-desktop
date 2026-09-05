@@ -45,6 +45,11 @@ export async function kickAdminAndRecreateGroup(
   if (!infos) {
     throw new Error('kickAdminAndRecreateGroup: infoGet is empty');
   }
+  // Android guards this in the manager, not just the UI: check(isSelfSuperAdmin(oldId))
+  if (SuperAdmin.parse(infos.description) !== us) {
+    throw new Error('kickAdminAndRecreateGroup: only the super admin can kick an admin');
+  }
+
   const allMembers = await MetaGroupWrapperActions.memberGetAll(groupPk);
   const others = allMembers.filter(m => m.pubkeyHex !== us && m.pubkeyHex !== kicked);
   const remainingMembers = others.map(m => m.pubkeyHex);
